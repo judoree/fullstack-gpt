@@ -1,6 +1,9 @@
 import streamlit as st
 
-st.title("Hello World")
-
-
-st.subheader("Welcome to Streamlit!")
+st.selectbox(
+    "Choose you model",
+    (
+        "GPT-3",
+        "GPT-4",
+    ),
+)
