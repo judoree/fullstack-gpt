@@ -8,6 +8,8 @@ from langchain.chat_models import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
 
 
+# https://deepmind.google/sitemap.xml
+# How much does the GPT Pro cost?
 llm = ChatOpenAI(temperature=0.1)
 
 
@@ -40,16 +42,57 @@ def get_answers(inputs):
     docs = inputs["docs"]
     question = inputs["question"]
     answers_chain = answers_prompt | llm
-    answers = []
-    for doc in docs:
-        result = answers_chain.invoke(
+    # answers = []      이전코드
+    # for doc in docs:
+    #     result = answers_chain.invoke(
+    #         {
+    #             "question": question,
+    #             "context": doc.page_content,
+    #         }
+    #     )
+    #     answers.append(result.content)
+    # st.write(answers)
+    return {  # 위 코드랑 똑같은 기능
+        "question": question,
+        "answers": [
             {
-                "question": question,
-                "context": doc.page_content,
+                "answer": answers_chain.invoke(
+                    {"question": question, "context": doc.page_content}
+                ).content,
+                "source": doc.metadata["source"],
+                "date": doc.metadata["lastmod"],
             }
-        )
-        answers.append(result.content)
-    st.write(answers)
+            for doc in docs
+        ],
+    }
+
+
+choose_prompt = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            """
+            Use ONLY the following pre-existing answers to answer the user's question.
+            Use the answers that have the highest score (more helpful) and favor the most recent ones.
+            Cite sources and return the sources of the answers as they are, do not change them.
+            Answers: {answers}
+            """,
+        ),
+        ("human", "{question}"),
+    ]
+)
+
+
+def choose_answer(inputs):
+    answers = inputs["answers"]
+    question = inputs["question"]
+    choose_chain = choose_prompt | llm
+    condensed = "\n\n".join(
+        f"Answer:{answer['answer']}\nSource:{answer['source']}\nDate:{answer['date']}\n"
+        for answer in answers
+    )
+
+    return choose_chain.invoke({"question": question, "answers": condensed})
 
 
 def parse_page(soup):
@@ -110,9 +153,16 @@ if url:
             st.error("Please write down a Sitemap URL.")
     else:
         retriever = load_website(url)
-        chain = {
-            "docs": retriever,
-            "question": RunnablePassthrough(),
-        } | RunnableLambda(get_answers)
+        query = st.text_input("Ask a question to the webstie.")
+        if query:
+            chain = (
+                {
+                    "docs": retriever,
+                    "question": RunnablePassthrough(),
+                }
+                | RunnableLambda(get_answers)
+                | RunnableLambda(choose_answer)
+            )
 
-        chain.invoke("What is the pricing of GPT-4 Turbo with vision.")
+            result = chain.invoke(query)
+            st.write(result.content.replace("$", "\$"))
