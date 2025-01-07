@@ -5,6 +5,15 @@ import math
 import openai
 import glob
 import os
+from langchain.chat_models import ChatOpenAI
+from langchain.prompts import ChatPromptTemplate
+from langchain.document_loaders import TextLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.schema import StrOutputParser
+
+llm = ChatOpenAI(
+    temperature=0.1,
+)
 
 has_transcript = os.path.exists(
     "./.cache/Ryan Holiday ON_ How To AVOID BEING MISERABLE For The Rest of"
@@ -88,7 +97,7 @@ if video:
         video_content = video.read()
         video_path = f"./.cache/{video.name}"
         audio_path = video_path.replace("mp4", "mp3")
-        trancript_path = video_path.replace("mp4", "txt")
+        transcript_path = video_path.replace("mp4", "txt")
         with open(video_path, "wb") as f:
             f.write(video_content)
         status.update(label="Extracting audio...")
@@ -96,9 +105,9 @@ if video:
         status.update(label="Cutting audio segments...")
         cut_audio_in_chunks(audio_path, 10, chunks_folder)
         status.update(label="Transcribing audio...")
-        trancript_chunks(chunks_folder, trancript_path)
+        trancript_chunks(chunks_folder, transcript_path)
 
-    transcript_tab, summary_tap, qa_tap = st.tabs(
+    transcript_tab, summary_tab, qa_tap = st.tabs(
         [
             "Transcript",
             "Summary",
@@ -108,5 +117,53 @@ if video:
 
     with transcript_tab:
         st.header("요약본")
-        with open(trancript_path, "r") as file:
+        with open(transcript_path, "r") as file:
             st.write(file.read())
+
+with summary_tab:
+    st.header("요약본 버튼")
+    start = st.button("Generate summary")
+    if start:
+        loader = TextLoader(transcript_path)
+        splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
+            chunk_size=800,
+            chunk_overlap=100,
+        )
+        docs = loader.load_and_split(text_splitter=splitter)
+        first_summary_prompt = ChatPromptTemplate.from_template(
+            """
+                Write a concise summary of the following:
+                "{text}"
+                CONCISE SUMMARY:                
+            """
+        )
+        first_summary_chain = first_summary_prompt | llm | StrOutputParser()
+        summary = first_summary_chain.invoke(
+            {"text": docs[0].page_content},
+        )
+        refine_prompt = ChatPromptTemplate.from_template(
+            """
+                Your job is to produce a final summary.
+                We have provided an existing summary up to a certain point: {existing_summary}
+                We have the opportunity to refine the existing summary (only if needed) with some more context below.
+                ------------
+                {context}
+                ------------
+                Given the new context, refine the original summary.
+                If the context isn't useful, RETURN the original summary.
+                """
+        )
+        refine_chain = refine_prompt | llm | StrOutputParser()
+        with st.status("Summarizing...") as status:
+            for i, doc in enumerate(docs[23:]):
+                status.update(
+                    label=f"Processing document {i+1}/{len(docs)-1} "
+                )
+                summary = refine_chain.invoke(
+                    {
+                        "existing_summary": summary,
+                        "context": doc.page_content,
+                    }
+                )
+                st.write(summary)
+        st.write(summary)
