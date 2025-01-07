@@ -10,6 +10,10 @@ from langchain.prompts import ChatPromptTemplate
 from langchain.document_loaders import TextLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.schema import StrOutputParser
+from langchain.vectorstores.faiss import FAISS
+from langchain.embeddings import CacheBackedEmbeddings, OpenAIEmbeddings
+from langchain.storage import LocalFileStore
+
 
 llm = ChatOpenAI(
     temperature=0.1,
@@ -19,6 +23,29 @@ has_transcript = os.path.exists(
     "./.cache/Ryan Holiday ON_ How To AVOID BEING MISERABLE For The Rest of"
     " Your Life _ Jay Shetty.txt"
 )
+
+splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
+    chunk_size=800,
+    chunk_overlap=100,
+)
+
+
+@st.cache_data()
+def embed_file(file_path):
+    cache_dir = LocalFileStore(f"./.cache/embeddings/{file.name}")
+    splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
+        chunk_size=800,
+        chunk_overlap=100,
+    )
+    loader = TextLoader(file_path)
+    docs = loader.load_and_split(text_splitter=splitter)
+    embeddings = OpenAIEmbeddings()
+    cached_embeddings = CacheBackedEmbeddings.from_bytes_store(
+        embeddings, cache_dir
+    )
+    vectorstore = FAISS.from_documents(docs, cached_embeddings)
+    retriever = vectorstore.as_retriever()
+    return retriever
 
 
 @st.cache_data()
@@ -107,7 +134,7 @@ if video:
         status.update(label="Transcribing audio...")
         trancript_chunks(chunks_folder, transcript_path)
 
-    transcript_tab, summary_tab, qa_tap = st.tabs(
+    transcript_tab, summary_tab, qa_tab = st.tabs(
         [
             "Transcript",
             "Summary",
@@ -116,7 +143,7 @@ if video:
     )
 
     with transcript_tab:
-        st.header("요약본")
+        st.header("내용")
         with open(transcript_path, "r") as file:
             st.write(file.read())
 
@@ -155,7 +182,7 @@ with summary_tab:
         )
         refine_chain = refine_prompt | llm | StrOutputParser()
         with st.status("Summarizing...") as status:
-            for i, doc in enumerate(docs[23:]):
+            for i, doc in enumerate(docs[1:]):
                 status.update(
                     label=f"Processing document {i+1}/{len(docs)-1} "
                 )
@@ -167,3 +194,9 @@ with summary_tab:
                 )
                 st.write(summary)
         st.write(summary)
+
+    with qa_tab:
+        st.header("질문,답변")
+        retriever = embed_file(transcript_path)
+        docs = retriever.invoke("do they talk about marcus aurelius?")
+        st.write(docs)
